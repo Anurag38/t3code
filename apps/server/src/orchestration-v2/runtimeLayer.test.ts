@@ -19,6 +19,7 @@ import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
@@ -984,7 +985,7 @@ it.layer(TestLayer)("OrchestrationV2LayerLive lifecycle", (it) => {
       if (promotedMessageItem.type !== "user_message") {
         assert.fail("promoted queue item must be a user message");
       }
-      assert.equal(promotedMessageItem.inputIntent, "turn_start");
+      assert.equal(promotedMessageItem.inputIntent, "queued_turn");
       assert.isTrue(
         promotedMessageItem.startedAt !== null &&
           DateTime.toEpochMillis(promotedMessageItem.startedAt) >=
@@ -1335,6 +1336,7 @@ it.layer(SharedApplicationDataPlaneTestLayer)("visited projection", (it) => {
       assert.isNull(created.thread.lastVisitedAt);
       const createdUpdatedAt = created.thread.updatedAt;
 
+      yield* TestClock.adjust("1 second");
       yield* orchestrator.dispatch({
         type: "thread.visit",
         commandId: CommandId.make("runtime-layer-visited-thread-visit"),
