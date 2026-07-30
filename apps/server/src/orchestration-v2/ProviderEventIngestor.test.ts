@@ -303,6 +303,8 @@ layer("ProviderEventIngestorV2", (it) => {
         maxAttempts: 3,
         retryDelayMs: 2_000,
       });
+      assert.isNotNull(errorItem.startedAt);
+      if (errorItem.startedAt === null) return;
       assert.equal(
         DateTime.toEpochMillis(errorItem.startedAt),
         DateTime.toEpochMillis(retryStartedAt),
