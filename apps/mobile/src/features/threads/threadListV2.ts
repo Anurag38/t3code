@@ -1,4 +1,9 @@
-import { effectiveSettled, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  effectiveSettled,
+  effectiveSnoozed,
+  threadWokeAt,
+} from "@t3tools/client-runtime/state/thread-settled";
+import { sortThreadsForListV2 } from "@t3tools/client-runtime/state/thread-sort";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -77,24 +82,6 @@ function firstValidTimestampMs(...candidates: ReadonlyArray<string | null | unde
   return 0;
 }
 
-/**
- * v2 sort: static creation order, newest thread on top. Activity NEVER
- * reorders the list — a row holds its position from open until settled, so
- * the screen only moves at lifecycle transitions. Mirrors web's
- * sortThreadsForSidebarV2.
- */
-export function sortThreadsForListV2<T extends { readonly id: string; readonly createdAt: string }>(
-  threads: readonly T[],
-): T[] {
-  // .sort() on a copy, not .toSorted(): Hermes doesn't ship the ES2023
-  // change-by-copy array methods.
-  return [...threads].sort(
-    (left, right) =>
-      parseTimestampMs(right.createdAt) - parseTimestampMs(left.createdAt) ||
-      left.id.localeCompare(right.id),
-  );
-}
-
 export interface ThreadListV2Item {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
@@ -171,10 +158,11 @@ export function buildThreadListV2ListItems(input: {
 }
 
 /**
- * Partitions visible threads into the active card block (creation order) and
- * the settled recency tail, matching the web v2 list. `autoSettleAfterDays`
- * mirrors the web default of 3 — mobile has no client-settings sync yet, so
- * the default is fixed here rather than user-configurable.
+ * Partitions visible threads into the active card block (attention priority,
+ * then creation order) and the settled recency tail, matching the web v2
+ * list. `autoSettleAfterDays` mirrors the web default of 3 — mobile has no
+ * client-settings sync yet, so the default is fixed here rather than
+ * user-configurable.
  */
 export function buildThreadListV2Items(input: {
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
@@ -215,6 +203,7 @@ export function buildThreadListV2Items(input: {
 
   const active: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
+  const wokeThreadKeys = new Set<string>();
   let snoozedCount = 0;
   let nextSnoozeWakeAt: string | null = null;
   for (const thread of input.threads) {
@@ -240,6 +229,15 @@ export function buildThreadListV2Items(input: {
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
     const changeRequestState =
       input.changeRequestStateByKey?.get(`${thread.environmentId}:${thread.id}`) ?? null;
+    const wokeAt = supportsSnooze ? threadWokeAt(thread, { now: snoozeNow }) : null;
+    if (wokeAt !== null) {
+      wokeThreadKeys.add(
+        threadSearchMatchKey({
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+        }),
+      );
+    }
     // Visibility parity with web: a snoozed thread leaves the list until it
     // wakes (or raises its hand — effectiveSnoozed refuses blocked/failed
     // work). Snooze outranks settled classification, same as web.
@@ -256,7 +254,12 @@ export function buildThreadListV2Items(input: {
     }
     if (
       supportsSettlement &&
-      effectiveSettled(thread, { now, autoSettleAfterDays, changeRequestState })
+      effectiveSettled(thread, {
+        now,
+        autoSettleAfterDays,
+        changeRequestState,
+        suppressAutoSettle: wokeAt !== null,
+      })
     ) {
       settled.push(thread);
     } else {
@@ -264,7 +267,20 @@ export function buildThreadListV2Items(input: {
     }
   }
 
-  const orderedActive = sortThreadsForListV2(active);
+  const orderedActive = sortThreadsForListV2(active, (thread) => {
+    if (
+      wokeThreadKeys.has(
+        threadSearchMatchKey({
+          environmentId: thread.environmentId,
+          threadId: thread.id,
+        }),
+      )
+    ) {
+      return "woke";
+    }
+    if (thread.settledOverride === "active") return "unsettled";
+    return "default";
+  });
   const orderedSettled = [...settled].sort(
     (left, right) =>
       firstValidTimestampMs(right.latestUserMessageAt, right.updatedAt) -
