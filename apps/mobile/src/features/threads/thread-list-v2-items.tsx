@@ -3,6 +3,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
+import { resolveSettledTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, type ComponentProps } from "react";
 import { Platform, Pressable, useWindowDimensions, View } from "react-native";
@@ -555,7 +556,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             )}
             style={{ fontFamily: MONO_FONT }}
           >
-            {relativeTime(thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt)}
+            {/* Settled rows read "how long ago did this wrap up", matching
+                their sort key so label and order can't disagree. */}
+            {relativeTime(resolveSettledTimestamp(thread) ?? thread.createdAt)}
           </Text>
         </View>
       </Pressable>
