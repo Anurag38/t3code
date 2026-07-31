@@ -2,7 +2,7 @@ diff --git a/dist/BunHttpServer.js b/dist/BunHttpServer.js
 index 5fb0cbacc183b58e31a442badf4aef06bebcd592..e31fb00c430821fc06247079091a93fb15a1ab92 100644
 --- a/dist/BunHttpServer.js
 +++ b/dist/BunHttpServer.js
-@@ -45,6 +45,20 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (options) {
+@@ -45,6 +45,25 @@ export const make = /*#__PURE__*/Effect.fnUntraced(function* (options) {
      ...options,
      fetch: handlerStack[0],
      websocket: {
@@ -20,6 +20,11 @@ index 5fb0cbacc183b58e31a442badf4aef06bebcd592..e31fb00c430821fc06247079091a93fb
 +        compress: "dedicated",
 +        decompress: "shared"
 +      },
++      // Reap connections that stop sending within 30s instead of Bun's 120s
++      // default. RPC clients ping every 5s, so a live client never idles; a
++      // suspended mobile app stops pinging and its half-dead socket (plus the
++      // server-side buffers feeding it) is released four times sooner.
++      idleTimeout: 30,
        open(ws) {
          Deferred.doneUnsafe(ws.data.deferred, Exit.succeed(ws));
        },
@@ -27,7 +32,7 @@ diff --git a/src/BunHttpServer.ts b/src/BunHttpServer.ts
 index 9f2ac3dfc018e2d35c6f44785f1ce05e2e06fc7c..f2bd3def712677ae1e7d475f5eaf27ac2e42ae1a 100644
 --- a/src/BunHttpServer.ts
 +++ b/src/BunHttpServer.ts
-@@ -90,6 +90,20 @@ export const make = Effect.fnUntraced(
+@@ -90,6 +90,25 @@ export const make = Effect.fnUntraced(
        ...options as ServeOptions<R>,
        fetch: handlerStack[0],
        websocket: {
@@ -45,6 +50,11 @@ index 9f2ac3dfc018e2d35c6f44785f1ce05e2e06fc7c..f2bd3def712677ae1e7d475f5eaf27ac
 +          compress: "dedicated",
 +          decompress: "shared"
 +        },
++        // Reap connections that stop sending within 30s instead of Bun's 120s
++        // default. RPC clients ping every 5s, so a live client never idles; a
++        // suspended mobile app stops pinging and its half-dead socket (plus the
++        // server-side buffers feeding it) is released four times sooner.
++        idleTimeout: 30,
          open(ws) {
            Deferred.doneUnsafe(ws.data.deferred, Exit.succeed(ws))
          },
