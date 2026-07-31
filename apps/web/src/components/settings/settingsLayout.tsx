@@ -1,9 +1,31 @@
-import { Undo2Icon } from "lucide-react";
+import { InfoIcon, Undo2Icon } from "lucide-react";
 import { type ComponentPropsWithoutRef, type ReactNode, useEffect, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+/** Info affordance explaining how a setting interacts with the shared background policy. */
+export function PolicyTooltip({ children }: { readonly children: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            className="inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground"
+            aria-label="Background policy details"
+          >
+            <InfoIcon className="size-3.5" />
+          </button>
+        }
+      />
+      <TooltipPopup side="top" className="max-w-72">
+        {children}
+      </TooltipPopup>
+    </Tooltip>
+  );
+}
 
 /** Re-render every `intervalMs`; return a stable timestamp snapshot for render-time relative labels. */
 export function useRelativeTimeTick(intervalMs = 1_000) {
