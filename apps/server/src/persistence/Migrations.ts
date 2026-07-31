@@ -47,16 +47,17 @@ import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
 import Migration0034 from "./Migrations/034_ProjectionThreadsSnoozed.ts";
-import Migration0035 from "./Migrations/035_OrchestrationV2.ts";
-import Migration0036 from "./Migrations/036_OrchestrationV2Subagents.ts";
-import Migration0037 from "./Migrations/037_OrchestrationV2Foundation.ts";
-import Migration0038 from "./Migrations/038_OrchestrationV2ProviderSessionBindings.ts";
-import Migration0039 from "./Migrations/039_OrchestrationV2ThreadLaunchWorkflows.ts";
-import Migration0040 from "./Migrations/040_ApplicationEventSource.ts";
-import Migration0041 from "./Migrations/041_OrchestrationV2EffectCancellation.ts";
-import Migration0042 from "./Migrations/042_ScheduledTasks.ts";
-import Migration0043 from "./Migrations/043_LegacyV1ImportState.ts";
-import Migration0044 from "./Migrations/044_OrchestrationV2SubagentObservability.ts";
+import Migration0035 from "./Migrations/035_ProjectionThreadTitleRegeneration.ts";
+import Migration0036 from "./Migrations/036_OrchestrationV2.ts";
+import Migration0037 from "./Migrations/037_OrchestrationV2Subagents.ts";
+import Migration0038 from "./Migrations/038_OrchestrationV2Foundation.ts";
+import Migration0039 from "./Migrations/039_OrchestrationV2ProviderSessionBindings.ts";
+import Migration0040 from "./Migrations/040_OrchestrationV2ThreadLaunchWorkflows.ts";
+import Migration0041 from "./Migrations/041_ApplicationEventSource.ts";
+import Migration0042 from "./Migrations/042_OrchestrationV2EffectCancellation.ts";
+import Migration0043 from "./Migrations/043_ScheduledTasks.ts";
+import Migration0044 from "./Migrations/044_LegacyV1ImportState.ts";
+import Migration0045 from "./Migrations/045_OrchestrationV2SubagentObservability.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -103,16 +104,17 @@ export const migrationEntries = [
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
   [33, "ProjectionThreadsSettled", Migration0033],
   [34, "ProjectionThreadsSnoozed", Migration0034],
-  [35, "OrchestrationV2", Migration0035],
-  [36, "OrchestrationV2Subagents", Migration0036],
-  [37, "OrchestrationV2Foundation", Migration0037],
-  [38, "OrchestrationV2ProviderSessionBindings", Migration0038],
-  [39, "OrchestrationV2ThreadLaunchWorkflows", Migration0039],
-  [40, "ApplicationEventSource", Migration0040],
-  [41, "OrchestrationV2EffectCancellation", Migration0041],
-  [42, "ScheduledTasks", Migration0042],
-  [43, "LegacyV1ImportState", Migration0043],
-  [44, "OrchestrationV2SubagentObservability", Migration0044],
+  [35, "ProjectionThreadTitleRegeneration", Migration0035],
+  [36, "OrchestrationV2", Migration0036],
+  [37, "OrchestrationV2Subagents", Migration0037],
+  [38, "OrchestrationV2Foundation", Migration0038],
+  [39, "OrchestrationV2ProviderSessionBindings", Migration0039],
+  [40, "OrchestrationV2ThreadLaunchWorkflows", Migration0040],
+  [41, "ApplicationEventSource", Migration0041],
+  [42, "OrchestrationV2EffectCancellation", Migration0042],
+  [43, "ScheduledTasks", Migration0043],
+  [44, "LegacyV1ImportState", Migration0044],
+  [45, "OrchestrationV2SubagentObservability", Migration0045],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

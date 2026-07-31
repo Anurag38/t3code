@@ -65,6 +65,13 @@ export function existingThreadIdsForCommand(
   switch (command.type) {
     case "thread.create":
       return [];
+    // Read-state commands only rewrite the thread payload's visited/unread
+    // watermark; they never touch messages, so they do not need the imported
+    // v1 transcript hydrated first. Visits fire on every thread-activity bump
+    // while a thread is open, so keeping them off the import path matters.
+    case "thread.visit":
+    case "thread.mark-unread":
+      return [];
     case "thread.fork":
       return [command.sourceThreadId];
     case "thread.merge_back":
@@ -106,7 +113,8 @@ export interface ThreadManagementSendResult {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly message: OrchestrationV2ConversationMessage;
   readonly run: OrchestrationV2Run;
-  readonly turnItem: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }>;
+  /** Null for queued sends: the user turn item materializes when the queued turn starts. */
+  readonly turnItem: Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> | null;
   readonly delivery: "started" | "queued" | "steered" | "restarted";
 }
 
@@ -168,27 +176,26 @@ export class ThreadManagementRunNotFoundError extends Schema.TaggedErrorClass<Th
   }
 }
 
-const ThreadManagementThreadNotSendableReason = Schema.Union([
-  Schema.TaggedStruct("Archived", {}),
-  Schema.TaggedStruct("NoSteerableRun", {
-    mode: Schema.Literals(["steer", "restart"]),
-  }),
-]);
-
-export class ThreadManagementThreadNotSendableError extends Schema.TaggedErrorClass<ThreadManagementThreadNotSendableError>()(
-  "ThreadManagementThreadNotSendableError",
+export class ThreadManagementThreadArchivedError extends Schema.TaggedErrorClass<ThreadManagementThreadArchivedError>()(
+  "ThreadManagementThreadArchivedError",
   {
     threadId: ThreadId,
-    reason: ThreadManagementThreadNotSendableReason,
   },
 ) {
   override get message(): string {
-    switch (this.reason._tag) {
-      case "Archived":
-        return `Thread ${this.threadId} is archived and cannot receive messages.`;
-      case "NoSteerableRun":
-        return `Thread ${this.threadId} has no running turn that can be ${this.reason.mode === "steer" ? "steered" : "restarted"}.`;
-    }
+    return `Thread ${this.threadId} is archived and cannot receive messages.`;
+  }
+}
+
+export class ThreadManagementNoSteerableRunError extends Schema.TaggedErrorClass<ThreadManagementNoSteerableRunError>()(
+  "ThreadManagementNoSteerableRunError",
+  {
+    threadId: ThreadId,
+    mode: Schema.Literals(["steer", "restart"]),
+  },
+) {
+  override get message(): string {
+    return `Thread ${this.threadId} has no running turn that can be ${this.mode === "steer" ? "steered" : "restarted"}.`;
   }
 }
 
@@ -244,7 +251,8 @@ export class ThreadManagementDurableRunProjectionError extends Schema.TaggedErro
 export const ThreadManagementError = Schema.Union([
   ThreadManagementThreadNotFoundError,
   ThreadManagementRunNotFoundError,
-  ThreadManagementThreadNotSendableError,
+  ThreadManagementThreadArchivedError,
+  ThreadManagementNoSteerableRunError,
   ThreadManagementThreadNotInterruptibleError,
   ThreadManagementProjectionLoadError,
   ThreadManagementProjectThreadsListError,
@@ -273,6 +281,7 @@ export interface ThreadManagementServiceShape {
     OrchestrationV2ThreadShellSnapshot,
     OrchestratorV2Error
   >;
+  readonly getThreadShell: OrchestratorV2["Service"]["getThreadShell"];
   readonly listProjectThreads: (input: {
     readonly projectId: ProjectId;
     readonly includeSubagents: boolean;
@@ -457,9 +466,8 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const target = yield* getProjectThread(input);
       if (target.thread.archivedAt !== null) {
-        return yield* new ThreadManagementThreadNotSendableError({
+        return yield* new ThreadManagementThreadArchivedError({
           threadId: input.threadId,
-          reason: { _tag: "Archived" },
         });
       }
 
@@ -470,9 +478,9 @@ const make = Effect.gen(function* () {
       >["dispatchMode"];
       if (input.mode === "steer" || input.mode === "restart") {
         if (steerableRun === undefined) {
-          return yield* new ThreadManagementThreadNotSendableError({
+          return yield* new ThreadManagementNoSteerableRunError({
             threadId: input.threadId,
-            reason: { _tag: "NoSteerableRun", mode: input.mode },
+            mode: input.mode,
           });
         }
         dispatchMode = {
@@ -505,23 +513,32 @@ const make = Effect.gen(function* () {
         message?.runId === null || message?.runId === undefined
           ? undefined
           : projection.runs.find((candidate) => candidate.id === message.runId);
-      const turnItem = projection.turnItems.find(
-        (
-          candidate,
-        ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> =>
-          candidate.type === "user_message" && candidate.messageId === input.messageId,
-      );
-      if (message === undefined || run === undefined || turnItem === undefined) {
+      const turnItem =
+        projection.turnItems.find(
+          (
+            candidate,
+          ): candidate is Extract<OrchestrationV2TurnItem, { readonly type: "user_message" }> =>
+            candidate.type === "user_message" && candidate.messageId === input.messageId,
+        ) ?? null;
+      // A queued message's user turn item is deliberately not emitted at
+      // dispatch time — it materializes when the queued turn actually starts,
+      // so it can map onto the provider turn. Every other dispatch mode still
+      // produces its turn item transactionally with the run.
+      if (
+        message === undefined ||
+        run === undefined ||
+        (turnItem === null && run.status !== "queued")
+      ) {
         return yield* new ThreadManagementDurableRunProjectionError({
           threadId: input.threadId,
           messageId: input.messageId,
         });
       }
       const delivery: ThreadManagementSendResult["delivery"] =
-        turnItem.inputIntent === "turn_start"
-          ? "started"
-          : turnItem.inputIntent === "queued_turn"
-            ? "queued"
+        turnItem === null || turnItem.inputIntent === "queued_turn"
+          ? "queued"
+          : turnItem.inputIntent === "turn_start"
+            ? "started"
             : input.mode === "restart"
               ? "restarted"
               : "steered";
@@ -631,6 +648,7 @@ const make = Effect.gen(function* () {
     getThreadSnapshot,
     getProjectThread,
     getShellSnapshot: orchestrator.getShellSnapshot,
+    getThreadShell: orchestrator.getThreadShell,
     listProjectThreads,
     sendToThread,
     waitForThread,
