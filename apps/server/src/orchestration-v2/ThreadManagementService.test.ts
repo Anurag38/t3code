@@ -25,7 +25,8 @@ import {
   ThreadManagementService,
   ThreadManagementThreadNotFoundError,
   ThreadManagementThreadNotInterruptibleError,
-  ThreadManagementThreadNotSendableError,
+  ThreadManagementThreadArchivedError,
+  ThreadManagementNoSteerableRunError,
   userFacingShellSnapshot,
   withCreationProvenance,
 } from "./ThreadManagementService.ts";
@@ -108,6 +109,25 @@ it("identifies every existing thread that must be hydrated before dispatch", () 
       threadId: targetThreadId,
     }),
   ).toEqual([targetThreadId]);
+
+  // Read-state commands skip transcript hydration entirely: they fire on
+  // every activity bump while a thread is open and never touch messages.
+  expect(
+    existingThreadIdsForCommand({
+      type: "thread.visit",
+      commandId: CommandId.make("command:thread-management:visit"),
+      threadId: targetThreadId,
+      visitedAt: "2026-07-30T00:00:00.000Z",
+    }),
+  ).toEqual([]);
+
+  expect(
+    existingThreadIdsForCommand({
+      type: "thread.mark-unread",
+      commandId: CommandId.make("command:thread-management:mark-unread"),
+      threadId: targetThreadId,
+    }),
+  ).toEqual([]);
 
   expect(
     existingThreadIdsForCommand({
@@ -199,20 +219,19 @@ it("derives thread management messages from structural error attributes", () => 
   expect(runNotFound).toMatchObject({ threadId, runId });
   expect(runNotFound.message).toBe(`Run ${runId} does not belong to thread ${threadId}.`);
 
-  const archived = new ThreadManagementThreadNotSendableError({
+  const archived = new ThreadManagementThreadArchivedError({
     threadId,
-    reason: { _tag: "Archived" },
   });
-  expect(archived).toMatchObject({ threadId, reason: { _tag: "Archived" } });
+  expect(archived).toMatchObject({ threadId });
   expect(archived.message).toBe(`Thread ${threadId} is archived and cannot receive messages.`);
 
-  const notSteerable = new ThreadManagementThreadNotSendableError({
+  const notSteerable = new ThreadManagementNoSteerableRunError({
     threadId,
-    reason: { _tag: "NoSteerableRun", mode: "restart" },
+    mode: "restart",
   });
   expect(notSteerable).toMatchObject({
     threadId,
-    reason: { _tag: "NoSteerableRun", mode: "restart" },
+    mode: "restart",
   });
   expect(notSteerable.message).toBe(
     `Thread ${threadId} has no running turn that can be restarted.`,
