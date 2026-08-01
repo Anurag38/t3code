@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
+  type NodeId,
   type OrchestrationV2ThreadProjection,
   type ProjectScript,
   type ProjectId,
@@ -342,6 +343,7 @@ const EMPTY_PROVIDERS: ServerProvider[] = [];
 const VISIT_DISPATCH_THROTTLE_MS = 10_000;
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PROJECTION_RUNS: OrchestrationV2ThreadProjection["runs"] = [];
+const EMPTY_PROJECTION_SUBAGENTS: OrchestrationV2ThreadProjection["subagents"] = [];
 const EMPTY_ATTACHMENT_IDS: string[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 
@@ -1204,6 +1206,9 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
+    reportFailure: false,
+  });
+  const stopThreadSubagent = useAtomCommand(threadEnvironment.stopSubagent, {
     reportFailure: false,
   });
   const respondToThreadApproval = useAtomCommand(threadEnvironment.respondToApproval, {
@@ -3274,6 +3279,19 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
   }, [activeThreadRef]);
+  const onStopWorkflow = useCallback(
+    (subagentId: NodeId) => {
+      if (!activeThreadRef) return;
+      void stopThreadSubagent({
+        environmentId: activeThreadRef.environmentId,
+        input: {
+          threadId: activeThreadRef.threadId,
+          subagentId,
+        },
+      });
+    },
+    [activeThreadRef, stopThreadSubagent],
+  );
   const openChangesFromThreadPanel = useCallback(() => {
     addDiffSurface();
   }, [addDiffSurface]);
@@ -6265,6 +6283,9 @@ function ChatViewContent(props: ChatViewProps) {
                 skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
                 providerStatuses={providerStatuses}
                 runs={serverProjection?.runs ?? EMPTY_PROJECTION_RUNS}
+                subagents={serverProjection?.subagents ?? EMPTY_PROJECTION_SUBAGENTS}
+                onOpenAgentsPanel={addAgentsSurface}
+                onStopWorkflow={onStopWorkflow}
                 anchorMessageId={timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
                 onAnchorSizeChanged={onTimelineAnchorSizeChanged}
