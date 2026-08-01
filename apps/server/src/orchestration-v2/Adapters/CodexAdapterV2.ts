@@ -1513,6 +1513,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const pendingRootTurns = yield* Ref.make(new Map<string, ProviderAdapterV2TurnInput>());
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
+        const subagentActivationsByNativeTurnId = yield* Ref.make(
+          new Map<string, OrchestrationV2SubagentActivation>(),
+        );
         const pendingSubagentTurns = yield* Ref.make(
           new Map<string, ReadonlyArray<PendingCodexSubagentTurnStarted>>(),
         );
@@ -2027,6 +2030,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               updatedAt: turn.startedAt,
             } satisfies OrchestrationV2SubagentActivation;
             activeContext.subagentActivation = activation;
+            yield* Ref.update(subagentActivationsByNativeTurnId, (current) =>
+              new Map(current).set(turn.nativeTurnId, activation),
+            );
             yield* Ref.update(activeTurns, (current) => {
               const updated = new Map(current);
               updated.set(turn.nativeTurnId, activeContext);
@@ -2470,7 +2476,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             const subagents = yield* Ref.get(subagentThreads);
             for (const [nativeThreadId, state] of Object.entries(input.item.agentsStates)) {
               const subagent = subagents.get(nativeThreadId);
-              if (subagent === undefined) {
+              if (subagent === undefined || subagent.task.currentActivationId === null) {
                 continue;
               }
               yield* emitSubagentTaskUpdate({
@@ -3482,45 +3488,53 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             if (subagent === undefined || payload.tokenUsage.total.totalTokens <= 0) {
               return;
             }
-            const total = payload.tokenUsage.total;
-            const usage = {
-              totalTokens: total.totalTokens,
-              inputTokens: total.inputTokens,
-              cachedInputTokens: total.cachedInputTokens,
-              outputTokens: total.outputTokens,
-              reasoningOutputTokens: total.reasoningOutputTokens,
-            } satisfies OrchestrationV2SubagentUsage;
-            yield* emitSubagentTaskUpdate({
-              subagent,
-              status: subagent.task.status,
-              usage,
-            });
+            if (subagent.task.currentActivationId !== null) {
+              const total = payload.tokenUsage.total;
+              const usage = {
+                totalTokens: total.totalTokens,
+                inputTokens: total.inputTokens,
+                cachedInputTokens: total.cachedInputTokens,
+                outputTokens: total.outputTokens,
+                reasoningOutputTokens: total.reasoningOutputTokens,
+              } satisfies OrchestrationV2SubagentUsage;
+              yield* emitSubagentTaskUpdate({
+                subagent,
+                status: subagent.task.status,
+                usage,
+              });
+            }
 
             const activeContext = (yield* Ref.get(activeTurns)).get(payload.turnId);
-            if (
-              activeContext === undefined ||
-              activeContext.subagent !== subagent ||
-              activeContext.subagentActivation === null
-            ) {
+            const activation =
+              activeContext?.subagent === subagent
+                ? activeContext.subagentActivation
+                : ((yield* Ref.get(subagentActivationsByNativeTurnId)).get(payload.turnId) ?? null);
+            if (activation === null) {
               return;
             }
             const last = payload.tokenUsage.last;
-            const activation = {
-              ...activeContext.subagentActivation,
-              usage: {
+            const now = yield* DateTime.now;
+            const updatedActivation = {
+              ...activation,
+              usage: mergeCumulativeSubagentUsage(activation.usage, {
                 totalTokens: last.totalTokens,
                 inputTokens: last.inputTokens,
                 cachedInputTokens: last.cachedInputTokens,
                 outputTokens: last.outputTokens,
                 reasoningOutputTokens: last.reasoningOutputTokens,
-              },
-              updatedAt: yield* DateTime.now,
+              }),
+              updatedAt: activation.completedAt === null ? now : activation.updatedAt,
             } satisfies OrchestrationV2SubagentActivation;
-            activeContext.subagentActivation = activation;
+            if (activeContext?.subagent === subagent) {
+              activeContext.subagentActivation = updatedActivation;
+            }
+            yield* Ref.update(subagentActivationsByNativeTurnId, (current) =>
+              new Map(current).set(payload.turnId, updatedActivation),
+            );
             yield* emitProviderEvent({
               type: "subagent_activation.updated",
               driver: CODEX_PROVIDER,
-              activation,
+              activation: updatedActivation,
             });
           }).pipe(Effect.orDie),
         );
@@ -3558,6 +3572,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               updatedAt: now,
             } satisfies OrchestrationV2SubagentActivation;
             activeContext.subagentActivation = activation;
+            yield* Ref.update(subagentActivationsByNativeTurnId, (current) =>
+              new Map(current).set(activeContext.nativeTurnId, activation),
+            );
             yield* emitProviderEvent({
               type: "subagent_activation.updated",
               driver: CODEX_PROVIDER,
@@ -4528,6 +4545,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                     updatedAt: input.completedAt,
                   } satisfies OrchestrationV2SubagentActivation;
                   input.context.subagentActivation = activation;
+                  yield* Ref.update(subagentActivationsByNativeTurnId, (current) =>
+                    new Map(current).set(input.nativeTurnId, activation),
+                  );
                   yield* emitProviderEvent({
                     type: "subagent_activation.updated",
                     driver: CODEX_PROVIDER,
