@@ -19,5 +19,8 @@ jobs:
           git init
           git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch --no-tags origin main
           git fetch --no-tags upstream main
-          git push origin "upstream/main:main"
+          git checkout -B main origin/main
+          git merge --no-edit upstream/main
+          git push origin main
