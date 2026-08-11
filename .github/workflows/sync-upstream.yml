@@ -5,8 +5,7 @@ on:
     - cron: "17 */6 * * *"
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   sync:
@@ -14,15 +13,22 @@ jobs:
     steps:
       - name: Sync main from upstream
         env:
-          GH_TOKEN: ${{ github.token }}
+          SYNC_TOKEN: ${{ secrets.T3CODE_SYNC_TOKEN }}
         run: |
+          set -euo pipefail
+
+          if [ -z "${SYNC_TOKEN}" ]; then
+            echo "::error::T3CODE_SYNC_TOKEN is not configured. Add a fine-grained PAT for Anurag38/t3code with Contents: read/write and Workflows: read/write."
+            exit 1
+          fi
+
           git init
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git remote add upstream https://github.com/pingdotgg/t3code.git
-          git fetch --no-tags origin main
+          git -c "http.extraheader=AUTHORIZATION: bearer ${SYNC_TOKEN}" fetch --no-tags origin main
           git fetch --no-tags upstream main
           git checkout -B main origin/main
           git merge --no-edit upstream/main
-          git push origin main
+          git -c "http.extraheader=AUTHORIZATION: bearer ${SYNC_TOKEN}" push origin main
