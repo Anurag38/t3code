@@ -246,6 +246,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     provider,
     capabilities: {
       sessionModelSwitch: "in-session",
+      ...(provider === CODEX_DRIVER ? { promptlessTurnContinuation: true } : {}),
     },
     startSession,
     sendTurn,
@@ -514,8 +515,6 @@ it.effect(
               })
             : Effect.fail(unsupported()),
         listInstances: () => Effect.succeed([instanceId]),
-        listProviders: () => Effect.succeed([driverKind] as const),
-        streamChanges: Stream.empty,
         subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
           PubSub.subscribe(pubsub),
         ),
@@ -594,8 +593,6 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
             })
           : Effect.fail(unsupported()),
       listInstances: () => Effect.succeed([instanceId]),
-      listProviders: () => Effect.succeed([CODEX_DRIVER] as const),
-      streamChanges: Stream.empty,
       subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
         PubSub.subscribe(pubsub),
       ),
@@ -964,6 +961,56 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("allows promptless continuation only for capable providers", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const codexThreadId = asThreadId("thread-promptless-continuation");
+      yield* provider.startSession(codexThreadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId: codexThreadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* provider.sendTurn({ threadId: codexThreadId, continuation: true });
+      assert.deepEqual(routing.codex.sendTurn.mock.calls.at(-1)?.[0], {
+        threadId: codexThreadId,
+        continuation: true,
+      });
+
+      const claudeThreadId = asThreadId("thread-promptless-continuation-unsupported");
+      yield* provider.startSession(claudeThreadId, {
+        provider: CLAUDE_AGENT_DRIVER,
+        providerInstanceId: claudeAgentInstanceId,
+        threadId: claudeThreadId,
+        runtimeMode: "full-access",
+      });
+      const failure = yield* Effect.flip(
+        provider.sendTurn({ threadId: claudeThreadId, continuation: true }),
+      );
+      assert.instanceOf(failure, ProviderValidationError);
+      assert.include(failure.issue, "requires an explicit continuation prompt");
+      assert.equal(routing.claude.sendTurn.mock.calls.length, 0);
+
+      yield* provider.stopSession({ threadId: claudeThreadId });
+      routing.claude.startSession.mockClear();
+      const stoppedFailure = yield* Effect.flip(
+        provider.sendTurn({ threadId: claudeThreadId, continuation: true }),
+      );
+      assert.instanceOf(stoppedFailure, ProviderValidationError);
+      assert.include(stoppedFailure.issue, "requires an explicit continuation prompt");
+      assert.equal(routing.claude.startSession.mock.calls.length, 0);
+
+      yield* provider.stopSession({ threadId: codexThreadId });
+      routing.codex.startSession.mockClear();
+      routing.codex.sendTurn.mockClear();
+      routing.codex.stopSession.mockClear();
+      routing.claude.startSession.mockClear();
+      routing.claude.sendTurn.mockClear();
+      routing.claude.stopSession.mockClear();
+    }),
+  );
+
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
