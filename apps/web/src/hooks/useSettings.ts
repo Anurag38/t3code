@@ -49,7 +49,13 @@ import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useTheme } from "./useTheme";
-import { environmentSession, readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  environmentSession,
+  environmentSessionStatesAtom,
+  readEnvironmentScope,
+  useEnvironmentScope,
+} from "~/state/session";
+import { environmentIdsKey } from "~/state/environmentAtomList";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
@@ -330,22 +336,10 @@ export function useMigrateModelPreferences(
   }, [clientSettings, environmentId, hydrated, migrate, settings]);
 }
 
-// A hook of its own so callers passing an inline selector still get one merged
-// object per settings change instead of one per render.
-function useMergedEnvironmentSettings(
-  serverSettings: ServerSettings,
-  clientSettings: ClientSettings,
-): UnifiedSettings {
-  "use memo";
+// Returns the merged object alone so the selector, often inline, cannot widen its cache key.
+function useMergedSettings(serverSettings: ServerSettings): UnifiedSettings {
+  const clientSettings = useClientSettingsValue();
   return mergeEnvironmentSettings(serverSettings, clientSettings);
-}
-
-function useMergedSettings<T>(
-  serverSettings: ServerSettings,
-  selector: ((settings: UnifiedSettings) => T) | undefined,
-): T {
-  const merged = useMergedEnvironmentSettings(serverSettings, useClientSettingsValue());
-  return selector ? selector(merged) : (merged as T);
 }
 
 export function useClientSettings<T = ClientSettings>(
@@ -511,7 +505,8 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
 ): T {
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   useMigrateModelPreferences(environmentId, serverSettings);
-  return useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, selector);
+  const merged = useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS);
+  return selector ? selector(merged) : (merged as T);
 }
 
 export function usePersistEnvironmentProviderInstanceMutation(environmentId: EnvironmentId) {
@@ -534,7 +529,8 @@ export function usePrimarySettings<T = UnifiedSettings>(
     environment?.environmentId ?? null,
     environment?.serverConfig?.settings ?? null,
   );
-  return useMergedSettings(settings, selector);
+  const merged = useMergedSettings(settings);
+  return selector ? selector(merged) : (merged as T);
 }
 
 export const PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE =
@@ -552,22 +548,22 @@ export function usePrimarySettingsAvailable(): boolean {
 
 function useSharedSettingsSyncTargetIds(includePending = false): ReadonlyArray<EnvironmentId> {
   const { environments } = useEnvironments();
-  const writableTargetsAtom = Atom.make((get) =>
-    environments.filter(supportsSharedSettingsSync).flatMap((environment) => {
-      const result = get(environmentSession.sessionStateAtom(environment.environmentId));
-      // A cold grant must not drop a shared edit. The server authorizes the
-      // write; mismatch suggestions still wait for a confirmed grant.
-      if (includePending && result._tag === "Initial") {
-        return [environment.environmentId];
-      }
-      const session =
-        result._tag === "Failure" ? null : Option.getOrNull(AsyncResult.value(result));
-      return session !== null && sessionGrantsScope(session, AuthSettingsWriteScope)
-        ? [environment.environmentId]
-        : [];
-    }),
-  );
-  return useAtomValue(writableTargetsAtom);
+  const targetIds = environments
+    .filter(supportsSharedSettingsSync)
+    .map(({ environmentId }) => environmentId);
+  const results = useAtomValue(environmentSessionStatesAtom(environmentIdsKey(targetIds)));
+  return targetIds.flatMap((environmentId, index) => {
+    const result = results[index]!;
+    // A cold grant must not drop a shared edit. The server authorizes the
+    // write; mismatch suggestions still wait for a confirmed grant.
+    if (includePending && result._tag === "Initial") {
+      return [environmentId];
+    }
+    const session = result._tag === "Failure" ? null : Option.getOrNull(AsyncResult.value(result));
+    return session !== null && sessionGrantsScope(session, AuthSettingsWriteScope)
+      ? [environmentId]
+      : [];
+  });
 }
 
 function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
