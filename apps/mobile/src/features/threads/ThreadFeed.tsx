@@ -2,7 +2,11 @@ import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
-import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
+import {
+  ThreadMarkdownVideo,
+  ThreadMediaRetainContext,
+  ThreadMediaVisibleContext,
+} from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import {
   enrichedContextLinkCustomization,
@@ -81,6 +85,7 @@ import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
   executeAtomQuery,
+  isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -98,7 +103,7 @@ import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { textDirection } from "@t3tools/shared/textDirection";
-import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useFocusEffect, useIsFocused, useNavigation } from "@react-navigation/native";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType } from "../../native/native-layout-metrics";
 import { isDuoDevice } from "../../lib/device-type";
@@ -114,8 +119,10 @@ import {
   useSyncExternalStore,
   useId,
   type ComponentPropsWithRef,
+  type Dispatch,
   type ReactNode,
   type RefObject,
+  type SetStateAction,
 } from "react";
 import {
   Image,
@@ -444,7 +451,14 @@ function AssistantForkButton(props: {
           },
         })
           .then(async (result) => {
-            if (result._tag !== "Success") return;
+            if (isAtomCommandInterrupted(result)) return;
+            if (result._tag !== "Success") {
+              Dialog.alert(
+                "Could not confirm fork",
+                "Reconnect and check the thread list before trying again.",
+              );
+              return;
+            }
             const targetThreadReady = await waitForThreadShell(
               scopeThreadRef(props.environmentId, targetThreadId),
             );
@@ -1119,12 +1133,26 @@ function ThreadFeedScrollView(props: ComponentPropsWithRef<typeof Animated.Scrol
   );
 }
 
-function ThreadMediaVisibility(props: { readonly children: ReactNode }) {
+function ThreadMediaVisibility(props: {
+  readonly rowId: string;
+  readonly setRetainedRowId: Dispatch<SetStateAction<string | null>>;
+  readonly children: ReactNode;
+}) {
+  const { rowId, setRetainedRowId } = props;
   const [visible, setVisible] = useState(false);
   useViewabilityAmount<ThreadFeedEntry>(
     useCallback((token) => setVisible(token.sizeVisible > 0), []),
   );
-  return <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>;
+  const retain = useCallback(
+    (retained: boolean) =>
+      setRetainedRowId((current) => (retained ? rowId : current === rowId ? null : current)),
+    [rowId, setRetainedRowId],
+  );
+  return (
+    <ThreadMediaRetainContext value={retain}>
+      <ThreadMediaVisibleContext value={visible}>{props.children}</ThreadMediaVisibleContext>
+    </ThreadMediaRetainContext>
+  );
 }
 
 /** The reply a link sits in; a file it cites may be where the agent worked before writing it. */
@@ -2806,6 +2834,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const openPullRequest = useOpenPullRequest();
   const navigation = useNavigation();
   const openLinkedThread = useOpenLinkedThread();
+  // Recycling a row disposes its native audio player, so a started clip's row stays rendered.
+  const [retainedMediaRowId, setRetainedMediaRowId] = useState<string | null>(null);
+  const focused = useIsFocused();
+  if (!focused && retainedMediaRowId !== null) setRetainedMediaRowId(null);
   const onOpenTurnDiff = useCallback(
     (checkpoint: ThreadCheckpointSummary) => {
       setReviewSelectedSectionId(
@@ -3798,7 +3830,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         threadId={props.threadId}
         workspaceRoot={props.workspaceRoot}
       >
-        <ThreadMediaVisibility>
+        <ThreadMediaVisibility rowId={info.item.id} setRetainedRowId={setRetainedMediaRowId}>
           {info.item.type === "message" &&
           info.item.message.projectedItem?.item.type === "user_message" &&
           info.item.message.projectedItem.item.freshContext ? (
@@ -3937,6 +3969,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             }}
             getFixedItemSize={getFixedItemSize}
             drawDistance={500}
+            {...(retainedMediaRowId ? { alwaysRender: { keys: [retainedMediaRowId] } } : {})}
             keyboardShouldPersistTaps="always"
             keyboardDismissMode="none"
             // Android scrolls a tapped selectable message into view when it takes focus, which reads
